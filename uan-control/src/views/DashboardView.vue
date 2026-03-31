@@ -7,15 +7,24 @@
   const mensagemModal = ref('')
   const tipoModal = ref('')
 
-  // Forms
+  // Forms - Categoria
   const nomeCategoria = ref('')
+  const unidadeCategoria = ref('')
+
+  // Forms - Produto
   const nomeProduto = ref('')
   const categoriaSelecionada = ref('')
-  const unidadeCategoria = ref('')
   const quantidade = ref('')
   const unidade = ref('')
   const dataValidade = ref('')
   const estoqueMinimo = ref('')
+  const tempMinima = ref('')
+  const tempMaxima = ref('')
+
+  // Forms - Temperatura
+  const localTemperatura = ref('')
+  const tipoTemperatura = ref('')
+  const temperaturaAtual = ref('')
 
   // Collections
   const categorias = ref([])
@@ -42,6 +51,7 @@
 
   const diferencaEmDias = (data) => {
     if (!data) return null
+
     const hoje = new Date()
     hoje.setHours(0, 0, 0, 0)
 
@@ -52,7 +62,7 @@
     return Math.ceil(diffMs / (1000 * 60 * 60 * 24))
   }
 
-  // CADASTROS
+  // MODAL
 
   const abrirModalMensagem = (mensagem, tipo = 'sucesso') => {
     mensagemModal.value = mensagem
@@ -65,6 +75,8 @@
     mensagemModal.value = ''
     tipoModal.value = ''
   }
+
+  // CADASTROS
 
   const salvarCategoria = async () => {
     const nomeFormatado = nomeCategoria.value.trim()
@@ -106,12 +118,19 @@
     if (
       !nomeProduto.value.trim() ||
       !categoriaSelecionada.value ||
-      !quantidade.value ||
+      quantidade.value === '' ||
       !unidade.value.trim() ||
       !dataValidade.value ||
-      !estoqueMinimo.value
+      estoqueMinimo.value === '' ||
+      tempMinima.value === '' ||
+      tempMaxima.value === ''
     ) {
       abrirModalMensagem('Preencha todos os campos do produto.', 'erro')
+      return
+    }
+
+    if (Number(tempMinima.value) > Number(tempMaxima.value)) {
+      abrirModalMensagem('A temperatura mínima não pode ser maior que a máxima.', 'erro')
       return
     }
 
@@ -123,6 +142,8 @@
         unidade: unidade.value.trim(),
         dataValidade: dataValidade.value,
         estoqueMinimo: Number(estoqueMinimo.value),
+        tempMinima: Number(tempMinima.value),
+        tempMaxima: Number(tempMaxima.value),
         userId: getUserId(),
         createdAt: Timestamp.now(),
       })
@@ -133,11 +154,39 @@
       unidade.value = ''
       dataValidade.value = ''
       estoqueMinimo.value = ''
+      tempMinima.value = ''
+      tempMaxima.value = ''
 
       abrirModalMensagem('Produto cadastrado com sucesso.', 'sucesso')
     } catch (error) {
       console.error(error)
       abrirModalMensagem('Erro ao salvar produto.', 'erro')
+    }
+  }
+
+  const salvarTemperatura = async () => {
+    if (!localTemperatura.value.trim() || !tipoTemperatura.value || temperaturaAtual.value === '') {
+      abrirModalMensagem('Preencha todos os campos da temperatura.', 'erro')
+      return
+    }
+
+    try {
+      await addDoc(collection(db, 'temperaturas'), {
+        local: localTemperatura.value.trim(),
+        tipo: tipoTemperatura.value,
+        temperatura: Number(temperaturaAtual.value),
+        userId: getUserId(),
+        createdAt: Timestamp.now(),
+      })
+
+      localTemperatura.value = ''
+      tipoTemperatura.value = ''
+      temperaturaAtual.value = ''
+
+      abrirModalMensagem('Temperatura registrada com sucesso.', 'sucesso')
+    } catch (error) {
+      console.error(error)
+      abrirModalMensagem('Erro ao registrar temperatura.', 'erro')
     }
   }
 
@@ -150,6 +199,7 @@
       unidade.value = ''
     }
   }
+
   // LISTENERS
 
   const ouvirCategorias = () => {
@@ -201,6 +251,13 @@
   const nomeCategoriaPorId = (categoriaId) => {
     const categoria = categorias.value.find((item) => item.id === categoriaId)
     return categoria?.nome || 'Sem categoria'
+  }
+
+  const formatarDataHora = (valor) => {
+    const data = normalizarData(valor)
+    if (!data || Number.isNaN(data.getTime())) return '-'
+
+    return data.toLocaleString('pt-BR')
   }
 
   // MÉTRICAS DO DASHBOARD
@@ -360,9 +417,48 @@
 
           <input v-model="estoqueMinimo" type="number" min="0" placeholder="Estoque mínimo" />
 
+          <label>Validade</label>
           <input v-model="dataValidade" type="date" />
 
+          <input
+            v-model="tempMinima"
+            type="number"
+            step="0.1"
+            placeholder="Temperatura mínima de armazenamento (°C)"
+          />
+
+          <input
+            v-model="tempMaxima"
+            type="number"
+            step="0.1"
+            placeholder="Temperatura máxima de armazenamento (°C)"
+          />
+
           <button @click="salvarProduto">Salvar produto</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Registrar temperatura</h2>
+        <div class="form-column">
+          <input v-model="localTemperatura" type="text" placeholder="Local da medição" />
+
+          <select v-model="tipoTemperatura">
+            <option disabled value="">Selecione o tipo</option>
+            <option value="freezer">Freezer</option>
+            <option value="geladeira">Geladeira</option>
+            <option value="alimento_quente">Alimento quente</option>
+            <option value="alimento_frio">Alimento frio</option>
+          </select>
+
+          <input
+            v-model="temperaturaAtual"
+            type="number"
+            step="0.1"
+            placeholder="Temperatura atual (°C)"
+          />
+
+          <button @click="salvarTemperatura">Salvar temperatura</button>
         </div>
       </div>
     </div>
@@ -402,6 +498,8 @@
             <th>Unidade</th>
             <th>Validade</th>
             <th>Estoque mínimo</th>
+            <th>Temp. mín.</th>
+            <th>Temp. máx.</th>
           </tr>
         </thead>
         <tbody>
@@ -412,28 +510,52 @@
             <td>{{ produto.unidade }}</td>
             <td>{{ produto.dataValidade }}</td>
             <td>{{ produto.estoqueMinimo }}</td>
+            <td>{{ produto.tempMinima }}°C</td>
+            <td>{{ produto.tempMaxima }}°C</td>
           </tr>
         </tbody>
       </table>
       <p v-else class="muted">Ainda não há produtos cadastrados.</p>
     </div>
 
-    <div class="card">
-      <h2>Temperaturas fora do padrão</h2>
-      <ul v-if="temperaturasForaPadrao.length">
-        <li v-for="registro in temperaturasForaPadrao" :key="registro.id">
-          {{ registro.local || registro.tipo }} — {{ registro.temperatura }}°C
-        </li>
-      </ul>
-      <p v-else class="muted">Nenhum registro fora do padrão.</p>
+    <div class="grid">
+      <div class="card">
+        <h2>Temperaturas fora do padrão</h2>
+        <ul v-if="temperaturasForaPadrao.length">
+          <li v-for="registro in temperaturasForaPadrao" :key="registro.id">
+            {{ registro.local || registro.tipo }} — {{ registro.temperatura }}°C
+          </li>
+        </ul>
+        <p v-else class="muted">Nenhum registro fora do padrão.</p>
+      </div>
+
+      <div class="card">
+        <h2>Últimos registros de temperatura</h2>
+        <table v-if="temperaturas.length" class="table">
+          <thead>
+            <tr>
+              <th>Local</th>
+              <th>Tipo</th>
+              <th>Temperatura</th>
+              <th>Data</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="registro in temperaturas" :key="registro.id">
+              <td>{{ registro.local }}</td>
+              <td>{{ registro.tipo }}</td>
+              <td>{{ registro.temperatura }}°C</td>
+              <td>{{ formatarDataHora(registro.createdAt) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="muted">Ainda não há temperaturas registradas.</p>
+      </div>
     </div>
 
     <div v-if="mostrarModalMensagem" class="modal">
       <div class="modal-box" :class="tipoModal === 'erro' ? 'modal-erro' : 'modal-sucesso'">
-        <h3>
-          {{ tipoModal === 'erro' ? 'Atenção' : 'Sucesso' }}
-        </h3>
-
+        <h3>{{ tipoModal === 'erro' ? 'Atenção' : 'Sucesso' }}</h3>
         <p>{{ mensagemModal }}</p>
 
         <div class="modal-actions">
