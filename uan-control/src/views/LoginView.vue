@@ -22,10 +22,19 @@
 
   const registrar = async () => {
     erro.value = ''
+
     try {
-      await createUserWithEmailAndPassword(auth, email.value, senha.value)
+      const credencial = await createUserWithEmailAndPassword(auth, email.value, senha.value)
+
+      await setDoc(doc(db, 'usuarios', credencial.user.uid), {
+        uid: credencial.user.uid,
+        email: credencial.user.email,
+        createdAt: Timestamp.now(),
+      })
+
       router.push('/dashboard')
     } catch (e) {
+      console.error(e)
       erro.value = 'Nao foi possivel cadastrar. Verifique os dados.'
     }
   }

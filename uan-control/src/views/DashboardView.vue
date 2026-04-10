@@ -2,6 +2,7 @@
   import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
   import { collection, addDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore'
   import { auth, db } from '../firebase/config'
+  import { onAuthStateChanged } from 'firebase/auth'
 
   const mostrarModalMensagem = ref(false)
   const mensagemModal = ref('')
@@ -87,6 +88,11 @@
       return
     }
 
+    if (!auth.currentUser) {
+      abrirModalMensagem('Usuário não autenticado. Faça login novamente.', 'erro')
+      return
+    }
+
     const categoriaJaExiste = categorias.value.some(
       (categoria) => categoria.nome?.trim().toLowerCase() === nomeFormatado.toLowerCase()
     )
@@ -97,20 +103,27 @@
     }
 
     try {
+      if (!auth.currentUser) {
+        abrirModalMensagem('Usuário não autenticado.', 'erro')
+        return
+      }
+
       await addDoc(collection(db, 'categorias'), {
         nome: nomeFormatado,
         unidadePadrao: unidadeFormatada,
-        userId: getUserId(),
+        userId: auth.currentUser.uid,
         createdAt: Timestamp.now(),
       })
 
       nomeCategoria.value = ''
       unidadeCategoria.value = ''
-
       abrirModalMensagem('Categoria cadastrada com sucesso.', 'sucesso')
     } catch (error) {
-      console.error(error)
-      abrirModalMensagem('Erro ao salvar categoria.', 'erro')
+      console.error('Erro ao salvar categoria:', error)
+      abrirModalMensagem(
+        `Erro ao salvar categoria: ${error?.code || error?.message || 'desconhecido'}`,
+        'erro'
+      )
     }
   }
 
@@ -332,12 +345,14 @@
   })
 
   onMounted(() => {
-    if (auth.currentUser) {
+    onAuthStateChanged(auth, (user) => {
+      if (!user) return
+
       ouvirCategorias()
       ouvirProdutos()
       ouvirTemperaturas()
       ouvirDesperdicios()
-    }
+    })
   })
 
   onBeforeUnmount(() => {
