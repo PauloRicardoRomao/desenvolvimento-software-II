@@ -1,8 +1,18 @@
 <script setup>
   import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-  import { collection, addDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore'
-  import { auth, db } from '../firebase/config'
   import { onAuthStateChanged } from 'firebase/auth'
+  import {
+    collection,
+    addDoc,
+    onSnapshot,
+    query,
+    where,
+    Timestamp,
+    doc,
+    updateDoc,
+    orderBy,
+  } from 'firebase/firestore'
+  import { auth, db } from '../firebase/config'
 
   const mostrarModalMensagem = ref(false)
   const mensagemModal = ref('')
@@ -27,16 +37,26 @@
   const tipoTemperatura = ref('')
   const temperaturaAtual = ref('')
 
+  // Forms - Movimentação
+  const produtoMovimentacaoId = ref('')
+  const tipoMovimentacao = ref('')
+  const quantidadeMovimentacao = ref('')
+  const motivoMovimentacao = ref('')
+  const usoTotal = ref(false)
+
   // Collections
   const categorias = ref([])
   const produtos = ref([])
   const temperaturas = ref([])
   const desperdicios = ref([])
+  const movimentacoesEstoque = ref([])
 
   let unsubCategorias = null
   let unsubProdutos = null
   let unsubTemperaturas = null
   let unsubDesperdicios = null
+  let unsubMovimentacoes = null
+  let unsubAuth = null
 
   const getUserId = () => auth.currentUser?.uid || null
 
@@ -64,7 +84,6 @@
   }
 
   // MODAL
-
   const abrirModalMensagem = (mensagem, tipo = 'sucesso') => {
     mensagemModal.value = mensagem
     tipoModal.value = tipo
@@ -77,8 +96,53 @@
     tipoModal.value = ''
   }
 
-  // CADASTROS
+  // HELPERS
+  const nomeCategoriaPorId = (categoriaId) => {
+    const categoria = categorias.value.find((item) => item.id === categoriaId)
+    return categoria?.nome || 'Sem categoria'
+  }
 
+  const formatarDataHora = (valor) => {
+    const data = normalizarData(valor)
+    if (!data || Number.isNaN(data.getTime())) return '-'
+    return data.toLocaleString('pt-BR')
+  }
+
+  const limparFormularioProduto = () => {
+    nomeProduto.value = ''
+    categoriaSelecionada.value = ''
+    quantidade.value = ''
+    unidade.value = ''
+    dataValidade.value = ''
+    estoqueMinimo.value = ''
+    tempMinima.value = ''
+    tempMaxima.value = ''
+  }
+
+  const limparFormularioTemperatura = () => {
+    localTemperatura.value = ''
+    tipoTemperatura.value = ''
+    temperaturaAtual.value = ''
+  }
+
+  const limparFormularioMovimentacao = () => {
+    produtoMovimentacaoId.value = ''
+    tipoMovimentacao.value = ''
+    quantidadeMovimentacao.value = ''
+    motivoMovimentacao.value = ''
+    usoTotal.value = false
+  }
+
+  const atualizarUnidadePelaCategoria = () => {
+    const categoria = categorias.value.find((item) => item.id === categoriaSelecionada.value)
+    unidade.value = categoria?.unidadePadrao || ''
+  }
+
+  const produtoSelecionadoMovimentacao = computed(() => {
+    return produtos.value.find((item) => item.id === produtoMovimentacaoId.value) || null
+  })
+
+  // CADASTROS
   const salvarCategoria = async () => {
     const nomeFormatado = nomeCategoria.value.trim()
     const unidadeFormatada = unidadeCategoria.value.trim()
@@ -103,11 +167,6 @@
     }
 
     try {
-      if (!auth.currentUser) {
-        abrirModalMensagem('Usuário não autenticado.', 'erro')
-        return
-      }
-
       await addDoc(collection(db, 'categorias'), {
         nome: nomeFormatado,
         unidadePadrao: unidadeFormatada,
@@ -117,13 +176,11 @@
 
       nomeCategoria.value = ''
       unidadeCategoria.value = ''
+
       abrirModalMensagem('Categoria cadastrada com sucesso.', 'sucesso')
     } catch (error) {
       console.error('Erro ao salvar categoria:', error)
-      abrirModalMensagem(
-        `Erro ao salvar categoria: ${error?.code || error?.message || 'desconhecido'}`,
-        'erro'
-      )
+      abrirModalMensagem('Erro ao salvar categoria.', 'erro')
     }
   }
 
@@ -142,6 +199,11 @@
       return
     }
 
+    if (!auth.currentUser) {
+      abrirModalMensagem('Usuário não autenticado. Faça login novamente.', 'erro')
+      return
+    }
+
     if (Number(tempMinima.value) > Number(tempMaxima.value)) {
       abrirModalMensagem('A temperatura mínima não pode ser maior que a máxima.', 'erro')
       return
@@ -157,22 +219,14 @@
         estoqueMinimo: Number(estoqueMinimo.value),
         tempMinima: Number(tempMinima.value),
         tempMaxima: Number(tempMaxima.value),
-        userId: getUserId(),
+        userId: auth.currentUser.uid,
         createdAt: Timestamp.now(),
       })
 
-      nomeProduto.value = ''
-      categoriaSelecionada.value = ''
-      quantidade.value = ''
-      unidade.value = ''
-      dataValidade.value = ''
-      estoqueMinimo.value = ''
-      tempMinima.value = ''
-      tempMaxima.value = ''
-
+      limparFormularioProduto()
       abrirModalMensagem('Produto cadastrado com sucesso.', 'sucesso')
     } catch (error) {
-      console.error(error)
+      console.error('Erro ao salvar produto:', error)
       abrirModalMensagem('Erro ao salvar produto.', 'erro')
     }
   }
@@ -183,98 +237,186 @@
       return
     }
 
+    if (!auth.currentUser) {
+      abrirModalMensagem('Usuário não autenticado. Faça login novamente.', 'erro')
+      return
+    }
+
     try {
       await addDoc(collection(db, 'temperaturas'), {
         local: localTemperatura.value.trim(),
         tipo: tipoTemperatura.value,
         temperatura: Number(temperaturaAtual.value),
-        userId: getUserId(),
+        userId: auth.currentUser.uid,
         createdAt: Timestamp.now(),
       })
 
-      localTemperatura.value = ''
-      tipoTemperatura.value = ''
-      temperaturaAtual.value = ''
-
+      limparFormularioTemperatura()
       abrirModalMensagem('Temperatura registrada com sucesso.', 'sucesso')
     } catch (error) {
-      console.error(error)
+      console.error('Erro ao salvar temperatura:', error)
       abrirModalMensagem('Erro ao registrar temperatura.', 'erro')
     }
   }
 
-  const atualizarUnidadePelaCategoria = () => {
-    const categoria = categorias.value.find((item) => item.id === categoriaSelecionada.value)
+  const registrarMovimentacao = async () => {
+    if (!auth.currentUser) {
+      abrirModalMensagem('Usuário não autenticado. Faça login novamente.', 'erro')
+      return
+    }
 
-    if (categoria?.unidadePadrao) {
-      unidade.value = categoria.unidadePadrao
-    } else {
-      unidade.value = ''
+    if (
+      !produtoMovimentacaoId.value ||
+      !tipoMovimentacao.value ||
+      (!usoTotal.value && quantidadeMovimentacao.value === '')
+    ) {
+      abrirModalMensagem('Preencha os campos da movimentação.', 'erro')
+      return
+    }
+
+    const produto = produtos.value.find((item) => item.id === produtoMovimentacaoId.value)
+
+    if (!produto) {
+      abrirModalMensagem('Produto não encontrado.', 'erro')
+      return
+    }
+
+    const quantidadeAtual = Number(produto.quantidade || 0)
+    const quantidadeInformada = Number(quantidadeMovimentacao.value || 0)
+
+    if (!usoTotal.value && quantidadeInformada <= 0) {
+      abrirModalMensagem('Informe uma quantidade válida.', 'erro')
+      return
+    }
+
+    let novaQuantidade = quantidadeAtual
+    let quantidadeRegistrada = quantidadeInformada
+
+    if (tipoMovimentacao.value === 'entrada') {
+      if (usoTotal.value) {
+        abrirModalMensagem('A opção "usado tudo" só pode ser usada em saídas.', 'erro')
+        return
+      }
+
+      novaQuantidade = quantidadeAtual + quantidadeInformada
+    }
+
+    if (tipoMovimentacao.value === 'saida') {
+      if (usoTotal.value) {
+        quantidadeRegistrada = quantidadeAtual
+        novaQuantidade = 0
+      } else {
+        if (quantidadeInformada > quantidadeAtual) {
+          abrirModalMensagem('A quantidade usada não pode ser maior que o estoque atual.', 'erro')
+          return
+        }
+
+        novaQuantidade = quantidadeAtual - quantidadeInformada
+      }
+    }
+
+    try {
+      await updateDoc(doc(db, 'produtos', produto.id), {
+        quantidade: novaQuantidade,
+      })
+
+      await addDoc(collection(db, 'movimentacoes_estoque'), {
+        produtoId: produto.id,
+        produtoNome: produto.nome,
+        tipo: tipoMovimentacao.value,
+        quantidade: quantidadeRegistrada,
+        unidade: produto.unidade,
+        motivo: motivoMovimentacao.value.trim() || '',
+        usoTotal: usoTotal.value,
+        quantidadeAntes: quantidadeAtual,
+        quantidadeDepois: novaQuantidade,
+        userId: auth.currentUser.uid,
+        createdAt: Timestamp.now(),
+      })
+
+      limparFormularioMovimentacao()
+      abrirModalMensagem('Movimentação registrada com sucesso.', 'sucesso')
+    } catch (error) {
+      console.error('Erro ao registrar movimentação:', error)
+      abrirModalMensagem('Erro ao registrar movimentação.', 'erro')
     }
   }
 
   // LISTENERS
-
   const ouvirCategorias = () => {
-    const q = query(collection(db, 'categorias'), where('userId', '==', getUserId()))
+    const q = query(collection(db, 'categorias'), where('userId', '==', auth.currentUser.uid))
+
+    if (unsubCategorias) unsubCategorias()
 
     unsubCategorias = onSnapshot(q, (snapshot) => {
-      categorias.value = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      categorias.value = snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
       }))
     })
   }
 
   const ouvirProdutos = () => {
-    const q = query(collection(db, 'produtos'), where('userId', '==', getUserId()))
+    const q = query(collection(db, 'produtos'), where('userId', '==', auth.currentUser.uid))
+
+    if (unsubProdutos) unsubProdutos()
 
     unsubProdutos = onSnapshot(q, (snapshot) => {
-      produtos.value = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      produtos.value = snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
       }))
     })
   }
 
   const ouvirTemperaturas = () => {
-    const q = query(collection(db, 'temperaturas'), where('userId', '==', getUserId()))
+    const q = query(
+      collection(db, 'temperaturas'),
+      where('userId', '==', auth.currentUser.uid),
+      orderBy('createdAt', 'desc')
+    )
+
+    if (unsubTemperaturas) unsubTemperaturas()
 
     unsubTemperaturas = onSnapshot(q, (snapshot) => {
-      temperaturas.value = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      temperaturas.value = snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
       }))
     })
   }
 
   const ouvirDesperdicios = () => {
-    const q = query(collection(db, 'desperdicios'), where('userId', '==', getUserId()))
+    const q = query(collection(db, 'desperdicios'), where('userId', '==', auth.currentUser.uid))
+
+    if (unsubDesperdicios) unsubDesperdicios()
 
     unsubDesperdicios = onSnapshot(q, (snapshot) => {
-      desperdicios.value = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      desperdicios.value = snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
       }))
     })
   }
 
-  // HELPERS
+  const ouvirMovimentacoesEstoque = () => {
+    const q = query(
+      collection(db, 'movimentacoes_estoque'),
+      where('userId', '==', auth.currentUser.uid),
+      orderBy('createdAt', 'desc')
+    )
 
-  const nomeCategoriaPorId = (categoriaId) => {
-    const categoria = categorias.value.find((item) => item.id === categoriaId)
-    return categoria?.nome || 'Sem categoria'
+    if (unsubMovimentacoes) unsubMovimentacoes()
+
+    unsubMovimentacoes = onSnapshot(q, (snapshot) => {
+      movimentacoesEstoque.value = snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
+      }))
+    })
   }
 
-  const formatarDataHora = (valor) => {
-    const data = normalizarData(valor)
-    if (!data || Number.isNaN(data.getTime())) return '-'
-
-    return data.toLocaleString('pt-BR')
-  }
-
-  // MÉTRICAS DO DASHBOARD
-
+  // MÉTRICAS
   const produtosProximosVencimento = computed(() => {
     return produtos.value.filter((produto) => {
       const data = normalizarData(produto.dataValidade)
@@ -284,9 +426,7 @@
   })
 
   const quantidadeTotalEstoque = computed(() => {
-    return produtos.value.reduce((total, produto) => {
-      return total + Number(produto.quantidade || 0)
-    }, 0)
+    return produtos.value.reduce((total, produto) => total + Number(produto.quantidade || 0), 0)
   })
 
   const itensBaixaQuantidade = computed(() => {
@@ -299,21 +439,10 @@
     return temperaturas.value.filter((registro) => {
       const atual = Number(registro.temperatura)
 
-      if (registro.tipo === 'freezer') {
-        return atual > -18
-      }
-
-      if (registro.tipo === 'geladeira') {
-        return atual > 5
-      }
-
-      if (registro.tipo === 'alimento_quente') {
-        return atual < 60
-      }
-
-      if (registro.tipo === 'alimento_frio') {
-        return atual > 10
-      }
+      if (registro.tipo === 'freezer') return atual > -18
+      if (registro.tipo === 'geladeira') return atual > 5
+      if (registro.tipo === 'alimento_quente') return atual < 60
+      if (registro.tipo === 'alimento_frio') return atual > 10
 
       return false
     })
@@ -345,13 +474,14 @@
   })
 
   onMounted(() => {
-    onAuthStateChanged(auth, (user) => {
+    unsubAuth = onAuthStateChanged(auth, (user) => {
       if (!user) return
 
       ouvirCategorias()
       ouvirProdutos()
       ouvirTemperaturas()
       ouvirDesperdicios()
+      ouvirMovimentacoesEstoque()
     })
   })
 
@@ -360,6 +490,8 @@
     if (unsubProdutos) unsubProdutos()
     if (unsubTemperaturas) unsubTemperaturas()
     if (unsubDesperdicios) unsubDesperdicios()
+    if (unsubMovimentacoes) unsubMovimentacoes()
+    if (unsubAuth) unsubAuth()
   })
 </script>
 
@@ -367,7 +499,7 @@
   <section class="dashboard">
     <div class="header">
       <h1>Dashboard UAN</h1>
-      <p class="muted">Controle de estoque, validade, temperatura e desperdício.</p>
+      <p class="muted">Controle de estoque, validade, temperatura, movimentação e desperdício.</p>
     </div>
 
     <div class="cards">
@@ -427,9 +559,7 @@
           </select>
 
           <input v-model="quantidade" type="number" min="0" placeholder="Quantidade" />
-
           <input v-model="unidade" type="text" placeholder="Unidade" readonly />
-
           <input v-model="estoqueMinimo" type="number" min="0" placeholder="Estoque mínimo" />
 
           <label>Validade</label>
@@ -480,6 +610,47 @@
 
     <div class="grid">
       <div class="card">
+        <h2>Registrar movimentação</h2>
+        <div class="form-column">
+          <select v-model="produtoMovimentacaoId">
+            <option disabled value="">Selecione um produto</option>
+            <option v-for="produto in produtos" :key="produto.id" :value="produto.id">
+              {{ produto.nome }}
+            </option>
+          </select>
+
+          <select v-model="tipoMovimentacao">
+            <option disabled value="">Selecione o tipo</option>
+            <option value="entrada">Entrada</option>
+            <option value="saida">Saída</option>
+          </select>
+
+          <input
+            v-model="quantidadeMovimentacao"
+            type="number"
+            min="0"
+            step="0.1"
+            placeholder="Quantidade"
+            :disabled="usoTotal"
+          />
+
+          <input v-model="motivoMovimentacao" type="text" placeholder="Motivo da movimentação" />
+
+          <label class="checkbox-inline">
+            <input v-model="usoTotal" type="checkbox" />
+            Foi usado tudo
+          </label>
+
+          <p v-if="produtoSelecionadoMovimentacao" class="muted">
+            Estoque atual: {{ produtoSelecionadoMovimentacao.quantidade }}
+            {{ produtoSelecionadoMovimentacao.unidade }}
+          </p>
+
+          <button @click="registrarMovimentacao">Registrar movimentação</button>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Produtos próximos do vencimento</h2>
         <ul v-if="produtosProximosVencimento.length">
           <li v-for="produto in produtosProximosVencimento" :key="produto.id">
@@ -489,7 +660,9 @@
         </ul>
         <p v-else class="muted">Nenhum produto próximo do vencimento.</p>
       </div>
+    </div>
 
+    <div class="grid">
       <div class="card">
         <h2>Itens com baixa quantidade</h2>
         <ul v-if="itensBaixaQuantidade.length">
@@ -499,6 +672,16 @@
           </li>
         </ul>
         <p v-else class="muted">Nenhum item com estoque baixo.</p>
+      </div>
+
+      <div class="card">
+        <h2>Temperaturas fora do padrão</h2>
+        <ul v-if="temperaturasForaPadrao.length">
+          <li v-for="registro in temperaturasForaPadrao" :key="registro.id">
+            {{ registro.local || registro.tipo }} — {{ registro.temperatura }}°C
+          </li>
+        </ul>
+        <p v-else class="muted">Nenhum registro fora do padrão.</p>
       </div>
     </div>
 
@@ -533,39 +716,58 @@
       <p v-else class="muted">Ainda não há produtos cadastrados.</p>
     </div>
 
-    <div class="grid">
-      <div class="card">
-        <h2>Temperaturas fora do padrão</h2>
-        <ul v-if="temperaturasForaPadrao.length">
-          <li v-for="registro in temperaturasForaPadrao" :key="registro.id">
-            {{ registro.local || registro.tipo }} — {{ registro.temperatura }}°C
-          </li>
-        </ul>
-        <p v-else class="muted">Nenhum registro fora do padrão.</p>
-      </div>
+    <div class="card">
+      <h2>Últimos registros de temperatura</h2>
+      <table v-if="temperaturas.length" class="table">
+        <thead>
+          <tr>
+            <th>Local</th>
+            <th>Tipo</th>
+            <th>Temperatura</th>
+            <th>Data</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="registro in temperaturas" :key="registro.id">
+            <td>{{ registro.local }}</td>
+            <td>{{ registro.tipo }}</td>
+            <td>{{ registro.temperatura }}°C</td>
+            <td>{{ formatarDataHora(registro.createdAt) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="muted">Ainda não há temperaturas registradas.</p>
+    </div>
 
-      <div class="card">
-        <h2>Últimos registros de temperatura</h2>
-        <table v-if="temperaturas.length" class="table">
-          <thead>
-            <tr>
-              <th>Local</th>
-              <th>Tipo</th>
-              <th>Temperatura</th>
-              <th>Data</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="registro in temperaturas" :key="registro.id">
-              <td>{{ registro.local }}</td>
-              <td>{{ registro.tipo }}</td>
-              <td>{{ registro.temperatura }}°C</td>
-              <td>{{ formatarDataHora(registro.createdAt) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-else class="muted">Ainda não há temperaturas registradas.</p>
-      </div>
+    <div class="card">
+      <h2>Histórico de movimentações</h2>
+      <table v-if="movimentacoesEstoque.length" class="table">
+        <thead>
+          <tr>
+            <th>Produto</th>
+            <th>Tipo</th>
+            <th>Quantidade</th>
+            <th>Motivo</th>
+            <th>Uso total</th>
+            <th>Antes</th>
+            <th>Depois</th>
+            <th>Data</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="mov in movimentacoesEstoque" :key="mov.id">
+            <td>{{ mov.produtoNome }}</td>
+            <td>{{ mov.tipo }}</td>
+            <td>{{ mov.quantidade }} {{ mov.unidade }}</td>
+            <td>{{ mov.motivo || '-' }}</td>
+            <td>{{ mov.usoTotal ? 'Sim' : 'Não' }}</td>
+            <td>{{ mov.quantidadeAntes }}</td>
+            <td>{{ mov.quantidadeDepois }}</td>
+            <td>{{ formatarDataHora(mov.createdAt) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="muted">Ainda não há movimentações registradas.</p>
     </div>
 
     <div v-if="mostrarModalMensagem" class="modal">

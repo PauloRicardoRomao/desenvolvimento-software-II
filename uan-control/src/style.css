@@ -265,6 +265,26 @@ button.secondary:hover {
   color: #35530e;
 }
 
+.checkbox-inline {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  margin: 1em 0;
+}
+
+input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 1rem;
+  background: #fff;
+}
+
 /* login */
 .login-card {
   max-width: 520px;
